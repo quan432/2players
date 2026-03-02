@@ -2,121 +2,172 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Game Hai Người Chơi - AI Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Multiplayer Battle - Fixed Sync</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #222; color: white; font-family: sans-serif; text-align: center; }
-        #game-ui { position: absolute; top: 10px; width: 100%; z-index: 10; }
-        canvas { display: block; background: #333; margin: auto; border: 2px solid #555; }
-        input { padding: 8px; border-radius: 4px; border: none; }
-        button { padding: 8px 15px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 4px; }
-        .info { margin-top: 10px; font-size: 14px; color: #aaa; }
+        body { margin: 0; overflow: hidden; background: #1a1a1a; color: white; font-family: sans-serif; touch-action: none; }
+        #ui { position: absolute; top: 10px; width: 100%; z-index: 10; text-align: center; }
+        canvas { display: block; background: #222; margin: auto; border-bottom: 2px solid #444; width: 100vw; height: 60vh; }
+        
+        /* Thanh máu */
+        .hp-container { position: absolute; top: 65vh; width: 45%; height: 20px; background: #444; border: 2px solid #fff; }
+        #hp-p1 { left: 2%; } #hp-p2 { right: 2%; }
+        .hp-fill { width: 100%; height: 100%; background: #ff3300; transition: width 0.2s; }
+
+        /* Điều khiển Mobile */
+        .controls { position: absolute; bottom: 20px; width: 100%; display: flex; justify-content: space-around; padding: 0 10px; box-sizing: border-box; }
+        .dpad { display: grid; grid-template-columns: repeat(3, 60px); gap: 5px; }
+        .btn { width: 60px; height: 60px; background: rgba(255,255,255,0.2); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: bold; user-select: none; }
+        .btn:active { background: rgba(255,255,255,0.5); }
+        .attack-btn { width: 80px; height: 80px; background: #ff3300; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+
+        #setup-layer { position: absolute; inset: 0; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; }
+        input { padding: 10px; border-radius: 5px; border: none; margin: 10px; width: 200px; }
+        button { padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
     </style>
 </head>
 <body>
 
-<div id="game-ui">
-    <h2>Game Đối Kháng 2 Người (AI Demo)</h2>
-    <div id="setup">
-        <button onclick="createRoom()">Tạo Phòng (Host)</button>
-        <span> hoặc </span>
-        <input type="text" id="peerIdInput" placeholder="Nhập mã phòng của bạn bè...">
-        <button onclick="joinRoom()" style="background: #007bff;">Vào Chơi</button>
-    </div>
-    <div id="status" class="info">Hãy chọn Tạo phòng hoặc Nhập mã để bắt đầu.</div>
+<div id="setup-layer">
+    <h2>BATTLE MULTIPLAYER</h2>
+    <p id="my-id-display">Đang khởi tạo mã...</p>
+    <button onclick="copyId()">Copy Mã Của Tôi</button>
+    <br>
+    <input type="text" id="peerIdInput" placeholder="Dán mã bạn bè vào đây...">
+    <button onclick="joinRoom()" style="background: #007bff;">VÀO CHƠI</button>
+    <p style="font-size: 12px; color: #aaa;">Host không cần dán mã, chỉ cần đợi bạn kết nối.</p>
+</div>
+
+<div id="ui">
+    <div id="hp-p1" class="hp-container"><div id="fill-p1" class="hp-fill"></div><span style="font-size:10px">P1 (HOST)</span></div>
+    <div id="hp-p2" class="hp-container"><div id="fill-p2" class="hp-fill"></div><span style="font-size:10px">P2 (GUEST)</span></div>
 </div>
 
 <canvas id="gameCanvas"></canvas>
 
+<div class="controls">
+    <div class="dpad">
+        <div></div> <div class="btn" ontouchstart="move('up')" ontouchend="stop()">↑</div> <div></div>
+        <div class="btn" ontouchstart="move('left')" ontouchend="stop()">←</div> <div></div> <div class="btn" ontouchstart="move('right')" ontouchend="stop()">→</div>
+        <div></div> <div class="btn" ontouchstart="move('down')" ontouchend="stop()">↓</div> <div></div>
+    </div>
+    <div class="attack-btn" ontouchstart="attack()">ĐÁNH</div>
+</div>
+
 <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
-    canvas.width = 800;
-    canvas.height = 500;
+    canvas.width = 800; canvas.height = 500;
 
-    let peer, conn;
-    let myId, partnerId;
-    let isHost = false;
+    let peer, conn, myId;
+    let isHost = false, isConnected = false;
+    let p1 = { x: 100, y: 200, color: 'cyan', hp: 100, isAttacking: false };
+    let p2 = { x: 600, y: 200, color: 'magenta', hp: 100, isAttacking: false };
+    let currentDir = null;
 
-    // Khởi tạo nhân vật
-    let p1 = { x: 100, y: 250, color: 'cyan', size: 30 };
-    let p2 = { x: 700, y: 250, color: 'magenta', size: 30 };
-
-    // Phím điều khiển
     const keys = {};
-    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keydown', e => { 
+        keys[e.key] = true; 
+        if(e.code === 'Space') attack();
+    });
     window.addEventListener('keyup', e => keys[e.key] = false);
 
-    // Tạo Peer
     peer = new Peer();
-
     peer.on('open', id => {
         myId = id;
-        console.log('ID của bạn là: ' + id);
+        document.getElementById('my-id-display').innerText = "Mã của bạn: " + id;
     });
 
-    // Xử lý khi có người kết nối tới (Dành cho Host)
     peer.on('connection', c => {
-        conn = c;
-        isHost = true;
-        setupChat();
-        document.getElementById('status').innerText = "Bạn bè đã kết nối! Bắt đầu chơi.";
-        document.getElementById('setup').style.display = 'none';
+        conn = c; isHost = true;
+        setupConnection();
     });
-
-    function createRoom() {
-        alert("Gửi mã này cho bạn bè: " + myId);
-        document.getElementById('status').innerText = "Đang chờ bạn bè... Mã phòng: " + myId;
-    }
 
     function joinRoom() {
         const targetId = document.getElementById('peerIdInput').value;
         conn = peer.connect(targetId);
         isHost = false;
-        setupChat();
-        document.getElementById('status').innerText = "Đang kết nối tới " + targetId + "...";
-        document.getElementById('setup').style.display = 'none';
+        setupConnection();
     }
 
-    function setupChat() {
+    function setupConnection() {
+        conn.on('open', () => {
+            isConnected = true;
+            document.getElementById('setup-layer').style.display = 'none';
+        });
         conn.on('data', data => {
-            if (isHost) { p2.x = data.x; p2.y = data.y; } 
-            else { p1.x = data.x; p1.y = data.y; }
+            if (isHost) { 
+                p2.x = data.x; p2.y = data.y; p2.isAttacking = data.atk; 
+                if(data.hit) p1.hp -= 5;
+            } else { 
+                p1.x = data.x; p1.y = data.y; p1.isAttacking = data.atk;
+                if(data.hit) p2.hp -= 5;
+            }
         });
     }
 
-    function update() {
+    function move(dir) { currentDir = dir; }
+    function stop() { currentDir = null; }
+    function attack() {
         let me = isHost ? p1 : p2;
+        if(me.isAttacking) return;
+        me.isAttacking = true;
+        setTimeout(() => me.isAttacking = false, 200);
+    }
+
+    function copyId() {
+        navigator.clipboard.writeText(myId);
+        alert("Đã copy mã!");
+    }
+
+    function update() {
+        if (!isConnected) return;
+        let me = isHost ? p1 : p2;
+        let opp = isHost ? p2 : p1;
         let speed = 5;
+        let hasHit = false;
 
-        if (keys['ArrowUp'] || keys['w']) me.y -= speed;
-        if (keys['ArrowDown'] || keys['s']) me.y += speed;
-        if (keys['ArrowLeft'] || keys['a']) me.x -= speed;
-        if (keys['ArrowRight'] || keys['d']) me.x += speed;
+        // Di chuyển bàn phím & nút ảo
+        if (keys['ArrowUp'] || keys['w'] || currentDir === 'up') me.y -= speed;
+        if (keys['ArrowDown'] || keys['s'] || currentDir === 'down') me.y += speed;
+        if (keys['ArrowLeft'] || keys['a'] || currentDir === 'left') me.x -= speed;
+        if (keys['ArrowRight'] || keys['d'] || currentDir === 'right') me.x += speed;
 
-        // Gửi tọa độ cho đối phương
-        if (conn && conn.open) {
-            conn.send({ x: me.x, y: me.y });
+        // Kiểm tra va chạm khi tấn công
+        if (me.isAttacking) {
+            let dist = Math.sqrt((me.x - opp.x)**2 + (me.y - opp.y)**2);
+            if (dist < 50) {
+                hasHit = true; // Chỉ gửi hit 1 lần mỗi cú đánh
+            }
         }
+
+        // Gửi dữ liệu: Vị trí của mình + Trạng thái đánh + Mình có đánh trúng nó không
+        if (conn && conn.open) {
+            conn.send({ x: me.x, y: me.y, atk: me.isAttacking, hit: hasHit });
+        }
+
+        // Cập nhật thanh máu UI
+        document.getElementById('fill-p1').style.width = p1.hp + "%";
+        document.getElementById('fill-p2').style.width = p2.hp + "%";
     }
 
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Vẽ nhân vật 1
-        ctx.fillStyle = p1.color;
-        ctx.fillRect(p1.x, p1.y, p1.size, p1.size);
-        ctx.fillText("Người chơi 1", p1.x - 10, p1.y - 10);
-
-        // Vẽ nhân vật 2
-        ctx.fillStyle = p2.color;
-        ctx.fillRect(p2.x, p2.y, p2.size, p2.size);
-        ctx.fillText("Người chơi 2", p2.x - 10, p2.y - 10);
-
+        [p1, p2].forEach((p, i) => {
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, 40, 40);
+            if (p.isAttacking) {
+                ctx.strokeStyle = "yellow";
+                ctx.lineWidth = 5;
+                ctx.strokeRect(p.x - 5, p.y - 5, 50, 50);
+            }
+            ctx.fillStyle = "white";
+            ctx.fillText(i === 0 ? "P1 (Host)" : "P2 (Guest)", p.x, p.y - 10);
+        });
         update();
         requestAnimationFrame(draw);
     }
-
     draw();
 </script>
 </body>
