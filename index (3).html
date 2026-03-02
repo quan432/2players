@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Game Hai Người Chơi - AI Demo</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #222; color: white; font-family: sans-serif; text-align: center; }
+        #game-ui { position: absolute; top: 10px; width: 100%; z-index: 10; }
+        canvas { display: block; background: #333; margin: auto; border: 2px solid #555; }
+        input { padding: 8px; border-radius: 4px; border: none; }
+        button { padding: 8px 15px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 4px; }
+        .info { margin-top: 10px; font-size: 14px; color: #aaa; }
+    </style>
+</head>
+<body>
+
+<div id="game-ui">
+    <h2>Game Đối Kháng 2 Người (AI Demo)</h2>
+    <div id="setup">
+        <button onclick="createRoom()">Tạo Phòng (Host)</button>
+        <span> hoặc </span>
+        <input type="text" id="peerIdInput" placeholder="Nhập mã phòng của bạn bè...">
+        <button onclick="joinRoom()" style="background: #007bff;">Vào Chơi</button>
+    </div>
+    <div id="status" class="info">Hãy chọn Tạo phòng hoặc Nhập mã để bắt đầu.</div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 800;
+    canvas.height = 500;
+
+    let peer, conn;
+    let myId, partnerId;
+    let isHost = false;
+
+    // Khởi tạo nhân vật
+    let p1 = { x: 100, y: 250, color: 'cyan', size: 30 };
+    let p2 = { x: 700, y: 250, color: 'magenta', size: 30 };
+
+    // Phím điều khiển
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keyup', e => keys[e.key] = false);
+
+    // Tạo Peer
+    peer = new Peer();
+
+    peer.on('open', id => {
+        myId = id;
+        console.log('ID của bạn là: ' + id);
+    });
+
+    // Xử lý khi có người kết nối tới (Dành cho Host)
+    peer.on('connection', c => {
+        conn = c;
+        isHost = true;
+        setupChat();
+        document.getElementById('status').innerText = "Bạn bè đã kết nối! Bắt đầu chơi.";
+        document.getElementById('setup').style.display = 'none';
+    });
+
+    function createRoom() {
+        alert("Gửi mã này cho bạn bè: " + myId);
+        document.getElementById('status').innerText = "Đang chờ bạn bè... Mã phòng: " + myId;
+    }
+
+    function joinRoom() {
+        const targetId = document.getElementById('peerIdInput').value;
+        conn = peer.connect(targetId);
+        isHost = false;
+        setupChat();
+        document.getElementById('status').innerText = "Đang kết nối tới " + targetId + "...";
+        document.getElementById('setup').style.display = 'none';
+    }
+
+    function setupChat() {
+        conn.on('data', data => {
+            if (isHost) { p2.x = data.x; p2.y = data.y; } 
+            else { p1.x = data.x; p1.y = data.y; }
+        });
+    }
+
+    function update() {
+        let me = isHost ? p1 : p2;
+        let speed = 5;
+
+        if (keys['ArrowUp'] || keys['w']) me.y -= speed;
+        if (keys['ArrowDown'] || keys['s']) me.y += speed;
+        if (keys['ArrowLeft'] || keys['a']) me.x -= speed;
+        if (keys['ArrowRight'] || keys['d']) me.x += speed;
+
+        // Gửi tọa độ cho đối phương
+        if (conn && conn.open) {
+            conn.send({ x: me.x, y: me.y });
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Vẽ nhân vật 1
+        ctx.fillStyle = p1.color;
+        ctx.fillRect(p1.x, p1.y, p1.size, p1.size);
+        ctx.fillText("Người chơi 1", p1.x - 10, p1.y - 10);
+
+        // Vẽ nhân vật 2
+        ctx.fillStyle = p2.color;
+        ctx.fillRect(p2.x, p2.y, p2.size, p2.size);
+        ctx.fillText("Người chơi 2", p2.x - 10, p2.y - 10);
+
+        update();
+        requestAnimationFrame(draw);
+    }
+
+    draw();
+</script>
+</body>
+</html>
